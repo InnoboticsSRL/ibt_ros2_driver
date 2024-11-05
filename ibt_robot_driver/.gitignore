@@ -1,0 +1,6 @@
+awtube_ros2_driver/__pycache__
+awtube_ros2_driver/tests/__pycache__
+**/__pycache__
+*.pyc
+*.log
+test.json

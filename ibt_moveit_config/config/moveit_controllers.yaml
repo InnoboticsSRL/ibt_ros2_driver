@@ -1,0 +1,15 @@
+controller_names:
+- awtube
+awtube:
+  action_ns: follow_joint_trajectory
+  type: FollowJointTrajectory
+  default: true
+  joints:
+  - awtube_joint1
+  - awtube_joint2
+  - awtube_joint3
+  - awtube_joint4
+  - awtube_joint5
+  - awtube_joint6
+  allowed_execution_duration_scaling: 1.2
+  allowed_goal_duration_margin: 0.5

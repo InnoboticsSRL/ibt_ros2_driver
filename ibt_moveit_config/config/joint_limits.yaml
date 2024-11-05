@@ -1,0 +1,57 @@
+# joint_limits.yaml allows the dynamics properties specified in the URDF to be overwritten or augmented as needed
+# Specific joint properties can be changed with the keys [max_position, min_position, max_velocity, max_acceleration]
+# Joint limits can be turned off with [has_velocity_limits, has_acceleration_limits]
+joint_limits:
+  awtube_joint1:
+    has_velocity_limits: true
+    max_velocity: 2.58
+    has_acceleration_limits: true
+    max_acceleration: 3.5
+    has_deceleration_limits: true
+    max_decelaration: -3.5
+
+  awtube_joint2:
+    has_velocity_limits: true
+    max_velocity: 2.58
+    has_acceleration_limits: true
+    max_acceleration: 3.5
+    has_deceleration_limits: true
+    max_decelaration: -3.5
+
+  awtube_joint3:
+    has_velocity_limits: true
+    max_velocity: 3.1
+    has_acceleration_limits: true
+    max_acceleration: 3.5
+    has_deceleration_limits: true
+    max_decelaration: -3.5
+
+  awtube_joint4:
+    has_velocity_limits: true
+    max_velocity: 3.875
+    has_acceleration_limits: true
+    max_acceleration: 3.5
+    has_deceleration_limits: true
+    max_decelaration: -3.5
+
+  awtube_joint5:
+    has_velocity_limits: true
+    max_velocity: 3.875
+    has_acceleration_limits: true
+    max_acceleration: 3.5
+    has_deceleration_limits: true
+    max_decelaration: -3.5
+
+  awtube_joint6:
+    has_velocity_limits: true
+    max_velocity: 3.875
+    has_acceleration_limits: true
+    max_acceleration: 3.5
+    has_deceleration_limits: true
+    max_deceleration: -3.5
+
+cartesian_limits:
+  max_trans_vel: 1.0
+  max_trans_acc: 1.0 # 2.25
+  max_trans_dec: -1.0 #-3.50
+  max_rot_vel: 1.57 # 1.57
