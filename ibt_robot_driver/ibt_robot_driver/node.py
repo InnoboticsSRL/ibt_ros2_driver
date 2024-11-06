@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 
+# Copyright (c) 2024 Innobotics.SRL                                                                                       
+
 import asyncio
-import time
+import signal
+import logging
+
 from rclpy.lifecycle import LifecycleNode
+from std_msgs.msg import Header
+from std_srvs.srv import Empty
+from sensor_msgs.msg import JointState
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from control_msgs.action import FollowJointTrajectory
-from gbp.connection import GbcClient
-from gbp.ros import with_asyncio, AsyncIoSupport
-import signal
-from sensor_msgs.msg import JointState
-from gbp.ros import Ros2LoggingHandler
-import logging
+
+from gbp.ros import with_asyncio, AsyncIoSupport, Ros2LoggingHandler, Ros2Spinner
 from gbp.connection import GbcClient
 from gbp.effects.debug import OperationErrorLogger, MachineStateLogger
 from gbp.effects.heartbeat import HeatbeatEcho
-from gbp.ros import Ros2Spinner
 from gbp.effects import Stream, OpEnabledEffect
-from std_srvs.srv import Empty
+from gbp.gbc import ActivityStreamItem, ACTIVITYTYPE, MoveJointsInterpolatedActivityCommand, MoveJointsActivityParams, MoveJointsInterpolatedStream
 
 class RobotDriver(LifecycleNode, AsyncIoSupport):
     def __init__(self, loop: asyncio.AbstractEventLoop):
@@ -64,7 +66,6 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
             handle_accepted_callback=self.handle_accepted_callback)
 
         self.goal = None
-        self.goal_handle_ = None
 
     async def connect(self):
         await self.gbc.connect(blocking=True)
@@ -91,59 +92,56 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
     def cancel_callback(self, goal_handle):
         # Accepts or rejects a client request to cancel an action
         self.get_logger().info("Stopping initiated")
-        self._stop_move()
-        self.goal_handle_ = None
+        self._stop_move(goal_handle)
+        goal_handle.canceled()
         return CancelResponse.ACCEPT
 
     def handle_accepted_callback(self, goal_handle):
         # Takes care of multiple goal requests
-        # if self.goal_handle_ != None:
-        #     if self.goal_handle_.is_active:
-        #         self.get_logger().info("Stopping the executing goal")
-        #         self._stop_move()
-        #         self.goal_handle_.canceled()
+        if goal_handle.is_active:
+            self.get_logger().info("Stopping the executing goal")
+            self._stop_move()
+            goal_handle.canceled()
 
-        # self.goal_handle_ = goal_handle
-        # self.get_logger().info("Executing the new goal")
-        # self.goal_handle_.execute()
-        pass
+        self.get_logger().info("Executing the new goal")
+        goal_handle.execute()
 
     @with_asyncio(timeout=60)
     async def execute_callback(self, goal_handle):
         self.get_logger().info(f"Executing goal")
-        # try:
-        #     points = self.goal.trajectory.points
-        #     feedback = FollowJointTrajectory.Feedback()
-        #     feedback.header = Header()
-        #     feedback.header.frame_id = 'awtube_base_link'
-        #     result = FollowJointTrajectory.Result()
+        try:
+            points = self.goal.trajectory.points
+            feedback = FollowJointTrajectory.Feedback()
+            feedback.header = Header()
+            feedback.header.frame_id = 'awtube_base_link' # TODO parametric
+            result = FollowJointTrajectory.Result()
 
-        #     async def stream_callback(stream: Stream):
-        #         await stream.exec(
-        #             ActivityStreamItem(
-        #                 activityType=ACTIVITYTYPE.ACTIVITYTYPE_DWELL, dwell=DwellActivityParams(msToDwell=2000)
-        #             )
-        #         )
+            async def stream_callback(stream: Stream):
+                await stream.exec(
+                    ActivityStreamItem(
+                        activityType=ACTIVITYTYPE.ACTIVITYTYPE_MOVEJOINTSINTERPOLATED, moveJointsInterpolated=MoveJointsInterpolatedStream(
+                            jointPositionArray=points.positions,
+                            jointVelocityArray=points.velocities,
+                        )
+                    )
+                )
 
-        #     await self.gbc.run_once(Stream(0), stream_callback)
+            await self.gbc.run_once(Stream(0), stream_callback)
 
-        # except Exception:
-        #     goal_handle.canceled()
-        #     self.get_logger().info("Stop server.")
-        #     # result.error_code = result.SUCCESSFUL
-        #     result.error_string = "Cancelled"
-        #     self.goal_handle_ = None
-        #     return result
+        except Exception:
+            self._stop_move(goal_handle)
+            goal_handle.canceled()
+            self.get_logger().info("Stop server.")
+            result.error_code = result.INVALID_GOAL
+            result.error_string = "Cancelled"
+            return result
 
-        # goal_handle.succeed()
+        goal_handle.succeed()
+        result.error_code = result.SUCCESSFUL
+        result.error_string = "Completed"
+        self.get_logger().info("FollowJointTrajectory Completed the Goal")
+        return result
 
-        # self.goal_handle_ = None
-
-        # result.error_code = result.SUCCESSFUL
-        # result.error_string = "Completed"
-        # self.get_logger().info("FollowJointTrajectory Completed the Goal")
-        # return result
-
-    def _stop_move(self) -> bool:
-        time.sleep(1)
-        return True
+    def _stop_move(self, goal_handle):
+        # TODO implement a proper logic
+        pass
