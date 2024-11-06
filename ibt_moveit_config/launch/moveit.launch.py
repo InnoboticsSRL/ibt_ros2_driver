@@ -80,7 +80,6 @@ def write_yaml(package_name: str, file_path: str, data: Any, use_hexadecimal: bo
     except EnvironmentError:
         return None
 
-
 def modify_yaml(package_name: str, file_path: str, keys: List[str | int], new_value: Any, use_hexadecimal:bool = False) -> None:
     """
     Modify a value in a YAML file at a specified path using the given keys.
@@ -118,9 +117,10 @@ def modify_yaml(package_name: str, file_path: str, keys: List[str | int], new_va
     except EnvironmentError:
         return None
 
-def launch_setup(context, rviz_on_name):
+def generate_launch_description():
     # ------ Launching parameters ------
-    rviz_on = LaunchConfiguration(rviz_on_name)
+    gbc_url = LaunchConfiguration('gbc_url', default='ws://localhost:9001/ws')
+    use_fake = LaunchConfiguration('use_fake', default=True)
 
     # -------- Pilz motion planner --------
     start_state_max_bounds_error = 0.1
@@ -135,8 +135,7 @@ def launch_setup(context, rviz_on_name):
     publish_robot_description_semantic = True
     publish_robot_description_kinematics = True
     moveit_package = 'ibt_moveit_config'
-    robot_name = 'awtube3'
-
+    robot_name = 'awtube'
 
     # ---------- Robot description ------
     xacro_file = os.path.join(get_package_share_directory(moveit_package), 'config/' + robot_name + '.urdf.xacro')
@@ -144,7 +143,7 @@ def launch_setup(context, rviz_on_name):
     robot_description_diz = {'robot_description': robot_description}
 
     # ---------- Rviz ----------
-    rviz_config = os.path.join(get_package_share_directory(moveit_package), 'config', 'moveit.rviz')
+    rviz_config = os.path.join(get_package_share_directory(moveit_package), 'config', 'config.rviz')
 
     # ---------- Pilz Planning -------------
     planning_pipeline_config = {
@@ -181,15 +180,15 @@ def launch_setup(context, rviz_on_name):
         'robot_description_semantic': load_file(moveit_package, 'config/' + robot_name + '.srdf')
     }
     robot_description_kinematics = {
-        'robot_description_kinematics': load_file(moveit_package, 'config/' + 'kinematics.yaml')
+        'robot_description_kinematics': load_yaml(moveit_package, 'config/' + 'kinematics.yaml')
     }
     robot_description_planning = {
-        'robot_description_planning': load_file(moveit_package, 'config/' + 'joint_limits.yaml')
+        'robot_description_planning': load_yaml(moveit_package, 'config/' + 'joint_limits.yaml')
     }
 
     # ---------- MoveIt Controllers -------------
     moveit_controllers = {
-        'moveit_simple_controller_manager': load_file(moveit_package, 'config/' + 'moveit_controllers.yaml'),
+        'moveit_simple_controller_manager': load_yaml(moveit_package, 'config/' + 'moveit_controllers.yaml'),
         'moveit_controller_manager': 'moveit_simple_controller_manager/MoveItSimpleControllerManager'
     }
 
@@ -214,16 +213,10 @@ def launch_setup(context, rviz_on_name):
         package='rviz2',
         executable='rviz2',
         name='rviz2',
-        output={'both': 'log'},
-        arguments=['-d', rviz_config],
-        condition=IfCondition(rviz_on),
-        parameters=[
-            robot_description,
-            robot_description_semantic,
-            planning_pipeline_config,
-            robot_description_kinematics,
-        ],
-        emulate_tty=True
+        output='screen',
+        arguments=[
+            '-d', rviz_config
+        ]
     )
 
     robot_state_publisher = Node(
@@ -231,36 +224,31 @@ def launch_setup(context, rviz_on_name):
         executable='robot_state_publisher',
         name='robot_state_publisher',
         output='both',
-        parameters=[robot_description_diz]
+        parameters=[
+            {'use_sim_time': False},
+            robot_description_diz]
     )
     
+    joint_state_publisher_gui = Node(
+        package='joint_state_publisher_gui',
+        executable='joint_state_publisher_gui'
+    )
+
     ibt_robot_driver = Node(
         package='ibt_robot_driver',
-        namespace='robofox',
+        namespace='awtube',
         executable='ibt_robot_driver',
+        parameters=[{'url': gbc_url},
+                    {'use_fake': use_fake}],
     )
 
     # nodes to be launched
     nodes = [
         robot_state_publisher,
+        joint_state_publisher_gui,
         run_move_group_node,
         rviz_node,
         ibt_robot_driver,
     ]
 
-    return nodes
-
-
-def generate_launch_description():
-    rviz_on_name = 'rviz_on'
-    args = [
-        DeclareLaunchArgument(
-            rviz_on_name,
-            default_value='true',
-            choices=['true', 'false'],
-            description='Flag to launch Rviz'),
-    ]
-
-    return LaunchDescription(args + [
-        OpaqueFunction(function=launch_setup, args=[rviz_on_name])
-        ])
+    return LaunchDescription(nodes)
