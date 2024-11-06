@@ -5,23 +5,26 @@ import time
 from rclpy.lifecycle import LifecycleNode
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from control_msgs.action import FollowJointTrajectory
-from std_msgs.msg import Header
+from gbp.connection import GbcClient
+from gbp.ros import with_asyncio, AsyncIoSupport
+import signal
+from sensor_msgs.msg import JointState
+from gbp.ros import Ros2LoggingHandler
+import logging
 from gbp.connection import GbcClient
 from gbp.effects.debug import OperationErrorLogger, MachineStateLogger
 from gbp.effects.heartbeat import HeatbeatEcho
 from gbp.ros import Ros2Spinner
 from gbp.effects import Stream, OpEnabledEffect
-from gbp.gbc import ActivityStreamItem, ACTIVITYTYPE, DwellActivityParams
-from gbp.ros import with_asyncio, AsyncIoSupport
-from gbp.gbc_extra import Telemetry
-import signal
-from sensor_msgs.msg import JointState
-
 
 class RobotDriver(LifecycleNode, AsyncIoSupport):
     def __init__(self, loop: asyncio.AbstractEventLoop):
         super().__init__('ibt_robot_driver')
         AsyncIoSupport.__init__(self, loop)
+        ros_handler = Ros2LoggingHandler(self.get_logger())
+        logging.getLogger().addHandler(ros_handler)
+
+        # self.gbc = gbc
         loop.add_signal_handler(signal.SIGINT, self.destroy)
 
         # declare parameters
@@ -51,19 +54,15 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
 
         self.goal = None
         self.goal_handle_ = None
-
-        # connect to GBC
-        self.gbc = GbcClient(self.url)
+        self.gbc = GbcClient("ws://localhost:9001/ws")
         self.gbc.register(
             Ros2Spinner(self),
             HeatbeatEcho(),
             OperationErrorLogger(),
-            MachineStateLogger()
+            MachineStateLogger(),
         )
-    
     async def connect(self):
         await self.gbc.connect(blocking=True)
-        await self.gbc.run_once(OpEnabledEffect(), lambda op: op.enable_operation())
     
     def destroy(self):
         self.get_logger().info("Destroying node")

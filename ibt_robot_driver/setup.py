@@ -16,7 +16,7 @@ setup(
     ],
     install_requires=[
         'setuptools',
-        'gbp==0.0.1'
+        'gbp'
     ],
     dependency_links=[
         'https://downloads.glowbuzzer.com/releases/gbp/index.html'
@@ -29,7 +29,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'ibt_robot_driver = ibt_robot_driver.ibt_robot_driver:main'
+            'ibt_robot_driver = ibt_robot_driver.main:main'
         ],
     },
 )
