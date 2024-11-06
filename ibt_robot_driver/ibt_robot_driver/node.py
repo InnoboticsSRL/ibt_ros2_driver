@@ -16,15 +16,15 @@ from gbp.effects.debug import OperationErrorLogger, MachineStateLogger
 from gbp.effects.heartbeat import HeatbeatEcho
 from gbp.ros import Ros2Spinner
 from gbp.effects import Stream, OpEnabledEffect
+from std_srvs.srv import Empty
 
 class RobotDriver(LifecycleNode, AsyncIoSupport):
     def __init__(self, loop: asyncio.AbstractEventLoop):
         super().__init__('ibt_robot_driver')
         AsyncIoSupport.__init__(self, loop)
+
         ros_handler = Ros2LoggingHandler(self.get_logger())
         logging.getLogger().addHandler(ros_handler)
-
-        # self.gbc = gbc
         loop.add_signal_handler(signal.SIGINT, self.destroy)
 
         # declare parameters
@@ -36,11 +36,22 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         self.url = self.get_parameter('url').value
         self.use_fake = self.get_parameter('use_fake').value
         self.timer_period = self.get_parameter('timer_period').value
-        self._max_speed = 1
 
-        # publish joint states
+        # gbc connection
+        self.gbc = GbcClient(self.url)
+        self.gbc.register(
+            Ros2Spinner(self),
+            HeatbeatEcho(),
+            OperationErrorLogger(),
+            MachineStateLogger(),
+        )
+
+        # topics
         self._joint_state_publisher = self.create_publisher(
             JointState, 'joint_states', 10)
+        
+        # services
+        self.enable = self.create_service(Empty, 'enable', self.enable_callback)
         
         # moveit action server
         self._action_server = ActionServer(
@@ -54,13 +65,7 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
 
         self.goal = None
         self.goal_handle_ = None
-        self.gbc = GbcClient("ws://localhost:9001/ws")
-        self.gbc.register(
-            Ros2Spinner(self),
-            HeatbeatEcho(),
-            OperationErrorLogger(),
-            MachineStateLogger(),
-        )
+
     async def connect(self):
         await self.gbc.connect(blocking=True)
     
@@ -72,6 +77,12 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         self.loop.stop()
         pass # TODO
 
+    @with_asyncio(timeout=60)
+    async def enable_callback(self, request, response):
+        self.get_logger().info('Robot enabled')
+        await self.gbc.run_once(OpEnabledEffect(), lambda op: op.enable_operation())
+        return response
+    
     def goal_callback(self, goal_):
         self.get_logger().info('Goal request recieved')
         self.goal = goal_
