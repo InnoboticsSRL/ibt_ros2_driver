@@ -16,7 +16,7 @@ setup(
     ],
     install_requires=[
         'setuptools',
-        'gbp'
+        'gbp==0.0.2'
     ],
     dependency_links=[
         'https://downloads.glowbuzzer.com/releases/gbp/index.html'
