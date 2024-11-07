@@ -228,11 +228,6 @@ def generate_launch_description():
             {'use_sim_time': False},
             robot_description_diz]
     )
-    
-    joint_state_publisher_gui = Node(
-        package='joint_state_publisher_gui',
-        executable='joint_state_publisher_gui'
-    )
 
     ibt_robot_driver = Node(
         package='ibt_robot_driver',
@@ -245,7 +240,6 @@ def generate_launch_description():
     # nodes to be launched
     nodes = [
         robot_state_publisher,
-        joint_state_publisher_gui,
         run_move_group_node,
         rviz_node,
         ibt_robot_driver,
