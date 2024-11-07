@@ -1,7 +1,8 @@
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.substitutions import  LaunchConfiguration
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch.conditions import IfCondition
 import yaml
@@ -9,6 +10,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from typing import Any, List
 from launch.substitutions import Command, FindExecutable
+
 
 # ----------- Functions needed to work with file and or yaml -----------
 def load_file(package_name: str, file_path: str) -> bytes | None:
@@ -27,6 +29,7 @@ def load_file(package_name: str, file_path: str) -> bytes | None:
     except EnvironmentError:
         return None
 
+
 def load_yaml(package_name: str, file_path: str) -> Any | None:
     """
     Load and return the given YAML file
@@ -42,6 +45,7 @@ def load_yaml(package_name: str, file_path: str) -> Any | None:
             return yaml.safe_load(file)
     except EnvironmentError:
         return None
+
 
 def write_yaml(package_name: str, file_path: str, data: Any, use_hexadecimal: bool) -> None:
     """
@@ -73,6 +77,7 @@ def write_yaml(package_name: str, file_path: str, data: Any, use_hexadecimal: bo
                     :return:  A YAML representation of the integer in hexadecimal format.
                     """
                     return dumper.represent_scalar('tag:yaml.org,2002:int', hex(data))
+
                 MySafeDumper.add_representer(int, hex_representer)
 
             # Dump the data using the custom dumper
@@ -80,7 +85,9 @@ def write_yaml(package_name: str, file_path: str, data: Any, use_hexadecimal: bo
     except EnvironmentError:
         return None
 
-def modify_yaml(package_name: str, file_path: str, keys: List[str | int], new_value: Any, use_hexadecimal:bool = False) -> None:
+
+def modify_yaml(package_name: str, file_path: str, keys: List[str | int], new_value: Any,
+                use_hexadecimal: bool = False) -> None:
     """
     Modify a value in a YAML file at a specified path using the given keys.
 
@@ -117,6 +124,7 @@ def modify_yaml(package_name: str, file_path: str, keys: List[str | int], new_va
     except EnvironmentError:
         return None
 
+
 def generate_launch_description():
     # ------ Launching parameters ------
     gbc_url = LaunchConfiguration('gbc_url', default='ws://localhost:9001/ws')
@@ -150,7 +158,7 @@ def generate_launch_description():
         'move_group': {
             'planning_plugin': 'pilz_industrial_motion_planner/CommandPlanner',
             'capabilities': 'pilz_industrial_motion_planner/MoveGroupSequenceAction '
-            'pilz_industrial_motion_planner/MoveGroupSequenceService',
+                            'pilz_industrial_motion_planner/MoveGroupSequenceService',
             'start_state_max_bounds_error': start_state_max_bounds_error
         }
     }
@@ -213,7 +221,6 @@ def generate_launch_description():
         package='rviz2',
         executable='rviz2',
         name='rviz2',
-        output='screen',
         arguments=[
             '-d', rviz_config
         ]
@@ -223,26 +230,35 @@ def generate_launch_description():
         package='robot_state_publisher',
         executable='robot_state_publisher',
         name='robot_state_publisher',
-        output='both',
         parameters=[
             {'use_sim_time': False},
             robot_description_diz]
     )
 
-    ibt_robot_driver = Node(
-        package='ibt_robot_driver',
-        namespace='awtube',
-        executable='ibt_robot_driver',
-        parameters=[{'url': gbc_url},
-                    {'use_fake': use_fake}],
+    joint_state_publisher = Node(
+        package='joint_state_publisher',
+        executable='joint_state_publisher',
+        name='joint_state_publisher',
+        parameters=[{'source_list': ['/awtube/joint_states']}],
+    )
+
+    ibt_robot_driver = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(get_package_share_directory('ibt_robot_driver'), 'launch', 'ibt_robot_driver.launch.py')
+        ),
+        launch_arguments={
+            'gbc_url': gbc_url,
+            'use_fake': use_fake
+        }.items()
     )
 
     # nodes to be launched
     nodes = [
+        ibt_robot_driver,
+        joint_state_publisher,
         robot_state_publisher,
         run_move_group_node,
-        rviz_node,
-        ibt_robot_driver,
+        rviz_node
     ]
 
     return LaunchDescription(nodes)
