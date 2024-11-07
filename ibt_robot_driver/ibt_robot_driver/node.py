@@ -3,9 +3,9 @@
 # Copyright (c) 2024 Innobotics.SRL                                                                                       
 
 import asyncio
-import signal
 import logging
-
+from typing import Any
+from rclpy.clock import Clock
 from rclpy.lifecycle import LifecycleNode
 from std_msgs.msg import Header
 from std_srvs.srv import Empty
@@ -13,13 +13,37 @@ from sensor_msgs.msg import JointState
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from control_msgs.action import FollowJointTrajectory
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
+from rclpy.publisher import Publisher
+from std_msgs.msg import String, UInt64
 
 from gbp.ros import with_asyncio, AsyncIoSupport, Ros2LoggingHandler, Ros2Spinner
 from gbp.connection import GbcClient
+from gbp.effects.op import OpEnabledEffect
 from gbp.effects.debug import OperationErrorLogger, MachineStateLogger
 from gbp.effects.heartbeat import HeatbeatEcho
-from gbp.effects import Stream, OpEnabledEffect
+from gbp.effects import Stream, OpEnabledEffect, RegisteredGbcMessageEffect
+from gbp.gbc_extra import GlowbuzzerInboundMessage, Telemetry, GlowbuzzerCombinedStatus, JointStatus
 from gbp.gbc import ActivityStreamItem, ACTIVITYTYPE, MoveJointsInterpolatedActivityCommand, MoveJointsActivityParams, MoveJointsInterpolatedStream
+from gbp.client import GbcWebsocketInterface
+
+class JointStates(RegisteredGbcMessageEffect):
+    def __init__(self, publisher: Publisher):
+        self.publisher = publisher
+
+    def select(self, msg: GlowbuzzerInboundMessage) -> Any:
+        if msg.status:
+            return msg.status.machine.heartbeat, msg.status.joint
+
+    async def on_change(self, new_state, send: GbcWebsocketInterface):
+        js = JointState()
+        js.header = Header()
+        js.header.frame_id = 'awtube_base_link' # TODO parametric
+        js.header.stamp = Clock().now().to_msg()
+        js.name = ['awtube_joint1', 'awtube_joint2', 'awtube_joint3', 'awtube_joint4', 'awtube_joint5', 'awtube_joint6'] # TODO parametric
+        js.position = [joint.actPos for joint in new_state[1]]
+        js.velocity = [joint.actVel for joint in new_state[1]]
+        js.effort = [joint.actTorque for joint in new_state[1]]
+        self.publisher.publish(js)
 
 class RobotDriver(LifecycleNode, AsyncIoSupport):
     def __init__(self, loop: asyncio.AbstractEventLoop):
@@ -28,17 +52,14 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
 
         ros_handler = Ros2LoggingHandler(self.get_logger())
         logging.getLogger().addHandler(ros_handler)
-        loop.add_signal_handler(signal.SIGINT, self.destroy)
 
         # declare parameters
         self.declare_parameter('url', value="ws://localhost:9001/ws")
         self.declare_parameter('use_fake', value=True)
-        self.declare_parameter('timer_period', value=0.05)
 
         # get parameters
         self._url = self.get_parameter('url').value
         self._use_fake = self.get_parameter('use_fake').value
-        # self.timer_period = self.get_parameter('timer_period').value
 
         # gbc connection
         self._gbc = GbcClient(self._url)
@@ -47,12 +68,11 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
             HeatbeatEcho(),
             OperationErrorLogger(),
             MachineStateLogger(),
+            JointStates(self.create_publisher(JointState, "joint_states", 10))
         )
 
         # topics
-        self._joint_state_publisher = self.create_publisher(
-            JointState, 'joint_states', 10)
-        
+
         # services
         self._enable = self.create_service(Empty, 'enable', self.enable_callback)
         
@@ -73,13 +93,9 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
     async def connect(self):
         await self._gbc.connect(blocking=True)
     
-    def destroy(self):
+    async def destroy(self):
         self.get_logger().info("Destroying node")
-        pending = asyncio.all_tasks(self.loop)
-        for task in pending:
-            task.cancel()
-        self.loop.stop()
-        pass # TODO
+        await self._gbc.close()
 
     @with_asyncio(timeout=60)
     async def enable_callback(self, request, response):
@@ -110,40 +126,42 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         self.get_logger().info("Executing the new goal")
         goal_handle.execute()
 
-    @with_asyncio(timeout=60)
+    # @with_asyncio(timeout=60)
     async def execute_callback(self, goal_handle):
-        self.get_logger().info(f"Executing goal")
-        try:
-            points = self._goal.trajectory.points
-            feedback = FollowJointTrajectory.Feedback()
-            feedback.header = Header()
-            feedback.header.frame_id = 'awtube_base_link' # TODO parametric
-            result = FollowJointTrajectory.Result()
+        points = self._goal.trajectory.points
+        feedback = FollowJointTrajectory.Feedback()
+        feedback.header = Header()
+        feedback.header.frame_id = 'awtube_base_link' # TODO parametric
+        result = FollowJointTrajectory.Result()
 
-            # async def stream_callback(stream: Stream):
-            #     await stream.exec(
-            #         ActivityStreamItem(
-            #             activityType=ACTIVITYTYPE.ACTIVITYTYPE_MOVEJOINTSINTERPOLATED, moveJointsInterpolated=MoveJointsInterpolatedStream(
-            #                 jointPositionArray=points.positions,
-            #                 jointVelocityArray=points.velocities,
-            #             )
-            #         )
-            #     )
+        async def stream_callback(stream: Stream):
+            await stream.exec(
+                ActivityStreamItem(
+                    # activityType=ACTIVITYTYPE.ACTIVITYTYPE_MOVEJOINTSINTERPOLATED,
+                    # command=MoveJointsInterpolatedActivityCommand(
+                    #     params=MoveJointsActivityParams(
+                    #         joints=[0, 1, 2, 3, 4, 5], # TODO parametric
+                    #         points=[(point.time_from_start.sec, point.positions) for point in points]
+                    #     )
+                    # )
 
-            # await self._gbc.run_once(Stream(0), stream_callback)
-            goal_handle.succeed()
-            self._goal_handle = None
-            result.error_code = result.SUCCESSFUL
-            result.error_string = "Completed"
-            self.get_logger().info("FollowJointTrajectory Completed the Goal")
-            return result
+                )
+            )
+
+        await self._gbc.run_once(Stream(0), stream_callback)
+        goal_handle.succeed()
+        self._goal_handle = None
+        result.error_code = result.SUCCESSFUL
+        result.error_string = "Completed"
+        self.get_logger().info("FollowJointTrajectory Completed the Goal")
+        return result
         
-        except Exception:
-            self._stop_move(goal_handle)
-            goal_handle.canceled()
-            # result.error_code = result.INVALID_GOAL
-            result.error_string = "Cancelled"
-            return result
+        # except Exception:
+        #     self._stop_move(goal_handle)
+        #     goal_handle.canceled()
+        #     # result.error_code = result.INVALID_GOAL
+        #     result.error_string = "Cancelled"
+        #     return result
 
     def _stop_move(self, goal_handle):
         # TODO implement a proper logic
