@@ -97,7 +97,6 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         self.get_logger().info("Destroying node")
         await self._gbc.close()
 
-    @with_asyncio(timeout=60)
     async def enable_callback(self, request, response):
         self.get_logger().info('Robot enabled')
         await self._gbc.run_once(OpEnabledEffect(), lambda op: op.enable_operation())
@@ -126,7 +125,6 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         self.get_logger().info("Executing the new goal")
         goal_handle.execute()
 
-    # @with_asyncio(timeout=60)
     async def execute_callback(self, goal_handle):
         points = self._goal.trajectory.points
         feedback = FollowJointTrajectory.Feedback()
@@ -135,18 +133,20 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         result = FollowJointTrajectory.Result()
 
         async def stream_callback(stream: Stream):
-            await stream.exec(
+            activities = [
                 ActivityStreamItem(
-                    # activityType=ACTIVITYTYPE.ACTIVITYTYPE_MOVEJOINTSINTERPOLATED,
-                    # command=MoveJointsInterpolatedActivityCommand(
-                    #     params=MoveJointsActivityParams(
-                    #         joints=[0, 1, 2, 3, 4, 5], # TODO parametric
-                    #         points=[(point.time_from_start.sec, point.positions) for point in points]
-                    #     )
-                    # )
-
+                    activityType=ACTIVITYTYPE.ACTIVITYTYPE_MOVEJOINTSINTERPOLATED,
+                    moveJointsInterpolated=(
+                        MoveJointsInterpolatedStream(
+                            kinematicsConfigurationIndex=0,
+                            jointPositionArray=point.positions,
+                            jointVelocityArray=point.velocities,
+                        )
+                    ),
                 )
-            )
+                for point in points
+            ]
+            await stream.exec(*activities)
 
         await self._gbc.run_once(Stream(0), stream_callback)
         goal_handle.succeed()
