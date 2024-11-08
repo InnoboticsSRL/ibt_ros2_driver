@@ -82,7 +82,7 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
             FollowJointTrajectory,
             'follow_joint_trajectory',
             execute_callback=self.execute_callback,
-            callback_group=ReentrantCallbackGroup(),
+            # callback_group=ReentrantCallbackGroup(),
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
             handle_accepted_callback=self.handle_accepted_callback)
@@ -97,24 +97,29 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         self.get_logger().info("Destroying node")
         await self._gbc.close()
 
+    @with_asyncio()
     async def enable_callback(self, request, response):
         self.get_logger().info('Robot enabled')
         await self._gbc.run_once(OpEnabledEffect(), lambda op: op.enable_operation())
         return response
-    
-    def goal_callback(self, goal_):
+
+    @with_asyncio()
+    async def goal_callback(self, goal):
         self.get_logger().info('Goal request recieved')
-        self._goal = goal_
+        self._goal = goal
+        print(goal)
         return GoalResponse.ACCEPT
 
-    def cancel_callback(self, goal_handle):
+    @with_asyncio()
+    async def cancel_callback(self, goal_handle):
         # Accepts or rejects a client request to cancel an action
         self.get_logger().info("Stopping initiated")
         self._stop_move(goal_handle)
         goal_handle = None
         return CancelResponse.ACCEPT
 
-    def handle_accepted_callback(self, goal_handle):
+    @with_asyncio()
+    async def handle_accepted_callback(self, goal_handle):
         # Takes care of multiple goal requests
         if self._goal_handle and self._goal_handle.is_active:
             self.get_logger().info("Stopping the executing goal")
@@ -122,16 +127,18 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
             self._goal_handle.canceled()
 
         self._goal_handle = goal_handle
-        self.get_logger().info("Executing the new goal")
+        self.get_logger().info("Goal accepted")
         goal_handle.execute()
 
+    @with_asyncio()
     async def execute_callback(self, goal_handle):
+        self.get_logger().info("Executing the new goal")
         points = self._goal.trajectory.points
+        print()
         feedback = FollowJointTrajectory.Feedback()
         feedback.header = Header()
         feedback.header.frame_id = 'awtube_base_link' # TODO parametric
         result = FollowJointTrajectory.Result()
-
         async def stream_callback(stream: Stream):
             activities = [
                 ActivityStreamItem(
