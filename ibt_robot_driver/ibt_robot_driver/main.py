@@ -2,11 +2,11 @@
 import asyncio
 import rclpy
 import signal
-
+import sys
 from ibt_robot_driver.node import RobotDriver
 
-async def main():
-    rclpy.init()
+async def main(args=None):
+    rclpy.init(args=args)
     await RobotDriver(asyncio.get_running_loop()).connect()
 
 def handle_sigterm(*args):
@@ -15,6 +15,6 @@ def handle_sigterm(*args):
 
 try:
     signal.signal(signal.SIGTERM, handle_sigterm)
-    asyncio.run(main())
+    asyncio.run(main(sys.argv))
 except KeyboardInterrupt:
     print("KeyboardInterrupt")
