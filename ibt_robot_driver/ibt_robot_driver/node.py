@@ -5,6 +5,8 @@
 import asyncio
 import logging
 from typing import Any
+
+from ibt_robot_driver.topics import JointStates, DinStates
 from rclpy.clock import Clock
 from rclpy.lifecycle import LifecycleNode
 from std_msgs.msg import Header
@@ -14,7 +16,7 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from control_msgs.action import FollowJointTrajectory
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from rclpy.publisher import Publisher
-from std_msgs.msg import String, UInt64
+from std_msgs.msg import String, UInt8
 
 from gbp.ros import with_asyncio, AsyncIoSupport, Ros2LoggingHandler, Ros2Spinner
 from gbp.connection import GbcClient
@@ -22,28 +24,11 @@ from gbp.effects.op import OpEnabledEffect
 from gbp.effects.debug import OperationErrorLogger, MachineStateLogger
 from gbp.effects.heartbeat import HeatbeatEcho
 from gbp.effects import Stream, OpEnabledEffect, RegisteredGbcMessageEffect
-from gbp.gbc_extra import GlowbuzzerInboundMessage, Telemetry, GlowbuzzerCombinedStatus, JointStatus
-from gbp.gbc import ActivityStreamItem, ACTIVITYTYPE, MoveJointsInterpolatedActivityCommand, MoveJointsActivityParams, MoveJointsInterpolatedStream
-from gbp.client import GbcWebsocketInterface
+from gbp.gbc import ActivityStreamItem, ACTIVITYTYPE, MoveJointsInterpolatedActivityCommand, MoveJointsActivityParams, \
+    MoveJointsInterpolatedStream, SetDoutActivityCommand
+from trajectory_msgs.msg import JointTrajectoryPoint
+from utils import print_trajectory_goal
 
-class JointStates(RegisteredGbcMessageEffect):
-    def __init__(self, publisher: Publisher):
-        self.publisher = publisher
-
-    def select(self, msg: GlowbuzzerInboundMessage) -> Any:
-        if msg.status:
-            return msg.status.machine.heartbeat, msg.status.joint
-
-    async def on_change(self, new_state, send: GbcWebsocketInterface):
-        js = JointState()
-        js.header = Header()
-        js.header.frame_id = 'awtube_base_link' # TODO parametric
-        js.header.stamp = Clock().now().to_msg()
-        js.name = ['awtube_joint1', 'awtube_joint2', 'awtube_joint3', 'awtube_joint4', 'awtube_joint5', 'awtube_joint6'] # TODO parametric
-        js.position = [joint.actPos for joint in new_state[1]]
-        js.velocity = [joint.actVel for joint in new_state[1]]
-        js.effort = [joint.actTorque for joint in new_state[1]]
-        self.publisher.publish(js)
 
 class RobotDriver(LifecycleNode, AsyncIoSupport):
     def __init__(self, loop: asyncio.AbstractEventLoop):
@@ -68,14 +53,16 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
             HeatbeatEcho(),
             OperationErrorLogger(),
             MachineStateLogger(),
-            JointStates(self.create_publisher(JointState, "joint_states", 10))
+            JointStates(self.create_publisher(JointState, "joint_states", 10)),
+            DinStates(self.create_publisher(UInt8, "din_states", 10))
         )
 
         # topics
+        self._set_dout = self.create_subscription(UInt8, 'set_dout', self.set_dout_callback, 10)
 
         # services
         self._enable = self.create_service(Empty, 'enable', self.enable_callback)
-        
+
         # moveit action server
         self._action_server = ActionServer(
             self,
@@ -92,10 +79,28 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
 
     async def connect(self):
         await self._gbc.connect(blocking=True)
-    
+
     async def destroy(self):
         self.get_logger().info("Destroying node")
         await self._gbc.close()
+
+    @with_asyncio()
+    async def set_dout_callback(self, msg):
+        async def stream_callback(stream: Stream):
+            douts = [1, 0, 0, 0, 0, 0, 0, 0]
+            activities=[
+                ActivityStreamItem(
+                    activityType=ACTIVITYTYPE.ACTIVITYTYPE_SETDOUT,
+                    setDout=SetDoutActivityCommand(
+                        doutIndex=index,
+                        doutValue=value
+                    )
+                )
+                for index, value in douts
+            ]
+            await stream.exec(*activities)
+
+        await self._gbc.run_once(Stream(0), stream_callback)
 
     @with_asyncio()
     async def enable_callback(self, request, response):
@@ -107,7 +112,7 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
     async def goal_callback(self, goal):
         self.get_logger().info('Goal request recieved')
         self._goal = goal
-        print(goal)
+        print_trajectory_goal(goal)
         return GoalResponse.ACCEPT
 
     @with_asyncio()
@@ -130,15 +135,15 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         self.get_logger().info("Goal accepted")
         goal_handle.execute()
 
-    @with_asyncio()
+    @with_asyncio(timeout=60)
     async def execute_callback(self, goal_handle):
         self.get_logger().info("Executing the new goal")
-        points = self._goal.trajectory.points
-        print()
+        points : JointTrajectoryPoint = self._goal.trajectory.points
         feedback = FollowJointTrajectory.Feedback()
         feedback.header = Header()
-        feedback.header.frame_id = 'awtube_base_link' # TODO parametric
+        feedback.header.frame_id = 'awtube_base_link'  # TODO parametric
         result = FollowJointTrajectory.Result()
+
         async def stream_callback(stream: Stream):
             activities = [
                 ActivityStreamItem(
@@ -148,12 +153,17 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
                             kinematicsConfigurationIndex=0,
                             jointPositionArray=point.positions,
                             jointVelocityArray=point.velocities,
+                            duration=(
+                                ((point.time_from_start.sec - points[i - 1].time_from_start.sec) +
+                                (point.time_from_start.nanosec - points[i - 1].time_from_start.nanosec) / 1e9)*1e3
+                                if i > 0 else 0
+                            )
                         )
                     ),
                 )
-                for point in points
+                for i, point in enumerate(points)
             ]
-            await stream.exec(*activities)
+            await stream.exec(*activities[1:])
 
         await self._gbc.run_once(Stream(0), stream_callback)
         goal_handle.succeed()
@@ -162,7 +172,7 @@ class RobotDriver(LifecycleNode, AsyncIoSupport):
         result.error_string = "Completed"
         self.get_logger().info("FollowJointTrajectory Completed the Goal")
         return result
-        
+
         # except Exception:
         #     self._stop_move(goal_handle)
         #     goal_handle.canceled()
